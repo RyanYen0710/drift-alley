@@ -1,0 +1,13 @@
+# Drift Alley multiplayer server (Cloudflare Worker + Durable Objects)
+name = "drift-alley-server"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# Free plan needs SQLite-backed Durable Objects
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
