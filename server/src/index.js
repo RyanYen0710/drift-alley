@@ -10,19 +10,32 @@ const MAX_PLAYERS = 12;     // per room
 const MAX_MSG = 4096;       // bytes per message
 const MIN_GAP_MS = 40;      // per-player rate limit (~25 updates/s)
 
-const CORS = { 'Access-Control-Allow-Origin': '*' };
+// Only the game's own website may connect (stops other sites from using your server).
+const ALLOWED_ORIGINS = [/^https:\/\/drift-alley\.vercel\.app$/, /^https:\/\/drift-alley-[a-z0-9-]+-ryanyens-projects\.vercel\.app$/];
+const MAX_MSGS_PER_10S = 400;   // hard cap per player; normal play is ~150-250
+
+const SECURITY_HEADERS = {
+  'Content-Type': 'text/plain; charset=utf-8',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains',
+  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+};
+const reply = (text, status = 200) => new Response(text, { status, headers: SECURITY_HEADERS });
+const okOrigin = o => !!o && ALLOWED_ORIGINS.some(r => r.test(o));
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') {
-      return new Response('Drift Alley server is running', { headers: CORS });
+      return reply('Drift Alley server is running');
     }
     const m = url.pathname.match(/^\/room\/([A-Z0-9]{3,8})$/);
-    if (!m) return new Response('Not found', { status: 404, headers: CORS });
-    if (request.headers.get('Upgrade') !== 'websocket') {
-      return new Response('Expected a WebSocket', { status: 426, headers: CORS });
-    }
+    if (!m) return reply('Not found', 404);
+    if (request.headers.get('Upgrade') !== 'websocket') return reply('Expected a WebSocket', 426);
+    if (!okOrigin(request.headers.get('Origin'))) return reply('Forbidden', 403);
     const stub = env.ROOMS.get(env.ROOMS.idFromName(m[1]));
     return stub.fetch(request);
   },
@@ -36,16 +49,8 @@ export class Room extends DurableObject {
   }
 
   async fetch(request) {
-    const url = new URL(request.url);
-    const id = (url.searchParams.get('id') || '').slice(0, 24);
-    if (!/^[a-z0-9]{4,24}$/i.test(id)) return new Response('Bad id', { status: 400 });
-
-    const sockets = this.ctx.getWebSockets();
-    // Same player reconnecting: drop the old socket.
-    for (const ws of sockets) {
-      const a = ws.deserializeAttachment();
-      if (a && a.id === id) { try { ws.close(1000, 'replaced'); } catch (e) {} }
-    }
+    // The server picks each player's id, so nobody can pretend to be (or kick) someone else.
+    const id = 'p' + crypto.randomUUID().replace(/-/g, '').slice(0, 15);
     const full = this.ctx.getWebSockets().filter(w => w.readyState === 1).length >= MAX_PLAYERS;
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -57,7 +62,7 @@ export class Room extends DurableObject {
       return new Response(null, { status: 101, webSocket: client });
     }
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ id, p: null, t: 0 });
+    server.serializeAttachment({ id, p: null, t: 0, w: Date.now(), n: 0 });
 
     // Send the newcomer everyone already in the room.
     const peers = {};
@@ -75,10 +80,13 @@ export class Room extends DurableObject {
     const a = ws.deserializeAttachment();
     if (!a) return;
     const now = Date.now();
-    if (now - a.t < MIN_GAP_MS) return;
+    if (now - a.w > 10000) { a.w = now; a.n = 0; }
+    if (++a.n > MAX_MSGS_PER_10S) { try { ws.close(4008, 'too many messages'); } catch (e) {} return; }
+    if (now - a.t < MIN_GAP_MS) { try { ws.serializeAttachment(a); } catch (e) {} return; }
     let msg;
     try { msg = JSON.parse(message); } catch (e) { return; }
     if (!msg || msg.t !== 'p' || !msg.d || typeof msg.d !== 'object' || Array.isArray(msg.d)) return;
+    if (Object.keys(msg.d).length > 60) return;
     a.t = now;
     a.p = message.length < 1800 ? msg.d : null; // attachments are capped at 2 KB; big states still get forwarded
     try { ws.serializeAttachment(a); } catch (e) { a.p = null; try { ws.serializeAttachment(a); } catch (e2) {} }
@@ -91,9 +99,7 @@ export class Room extends DurableObject {
   leave(ws) {
     const a = ws.deserializeAttachment();
     if (!a) return;
-    // Only announce if this player has no other live socket (reconnects replace sockets).
-    const still = this.ctx.getWebSockets().some(w => w !== ws && w.readyState === 1 && (w.deserializeAttachment() || {}).id === a.id);
-    if (!still) this.broadcast(JSON.stringify({ t: 'x', id: a.id }), ws);
+    this.broadcast(JSON.stringify({ t: 'x', id: a.id }), ws);
   }
 
   broadcast(text, except) {
