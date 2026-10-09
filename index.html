@@ -308,9 +308,9 @@
   <div id="loading" hidden>Loading track…</div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mqtt@5.14.1/dist/mqtt.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.14.1/dist/mqtt.min.js" integrity="sha384-Fn2zaZeH/P7E88cwiBDKmBmrB35pj8a5baa5IzXAvBvF8pTFOJD3aHe3V8BtMsr6" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js" integrity="sha384-x0YgkOr/3UOZP2CRDxGW9e0Q+2Qjyr3uJrm4xU32Y7ZCNAo7Cc7bjhrZMi/dwczu" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="config.js"></script>
 <script>
 (() => {
@@ -2406,6 +2406,8 @@ function makeCfRoom(code, asHost, onFail){
       const now = performance.now();
       if (m.t === 'full'){ A.dead = true; try { ws.close(); } catch (e) {} onFail('That room is full (' + (m.max || 12) + ' players max).'); return; }
       if (m.t === 'snap' && m.peers && typeof m.peers === 'object'){
+        if (typeof m.me === 'string' && m.me.length < 40) A.me = m.me; // id assigned by the server
+        A.map.clear(); A.seen.clear();
         for (const id in m.peers){ if (id !== A.me && okPres(m.peers[id])){ A.map.set(id, m.peers[id]); A.seen.set(id, now); } }
         notify();
       } else if (m.t === 'p' && typeof m.id === 'string' && m.id !== A.me && okPres(m.d)){
@@ -2693,7 +2695,7 @@ function renderTour(){
   const last = tour.idx >= TOUR.length - 1;
   $('tourLbl').textContent = last ? 'Grand Tour final standings' : `Grand Tour standings after race ${tour.idx + 1} of ${TOUR.length}`;
   const rows = Object.values(tour.points).sort((a, b) => b.pts - a.pts);
-  $('tourBody').innerHTML = rows.map((e, i) => `<tr class="r${i + 1} ${e.me ? 'me' : ''}"><td class="p"><span class="medal">${ord(i + 1)}</span></td><td><span class="dot" style="background:${safeColor(e.color)}"></span><span class="nm">${escapeHtml(e.name)}${e.me ? ' (you)' : ''}</span></td><td class="t">${e.pts} pts</td></tr>`).join('');
+  $('tourBody').innerHTML = rows.map((e, i) => `<tr class="r${i + 1} ${e.me ? 'me' : ''}"><td class="p"><span class="medal">${ord(i + 1)}</span></td><td><span class="dot" style="background:${safeColor(e.color)}"></span><span class="nm">${escapeHtml(e.name)}${e.me ? ' (you)' : ''}</span></td><td class="t">${(+e.pts || 0) | 0} pts</td></tr>`).join('');
 }
 function updateResultButtons(){
   const again = $('again'), menu = $('menu'), pm = $('pickMap');
